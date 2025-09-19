@@ -39,15 +39,16 @@ def convert_to_txt(docx):
 
 
 def parse_options(block):
-    option_pattern = r'(\*?)([a-zA-Z])[).]\s*(.*?)(?= *\*?[a-zA-Z][).]\s|\n*\d+[).]\s|\Z)'
+    option_pattern = r'(?:^|\n)(\*?)([a-zA-Z])[).]\s*(.*?)(?=(?:\n\*?[a-zA-Z][).]\s)|(?:\n\d+[).]\s)|\Z)'
     options = re.findall(option_pattern, block, re.DOTALL)
-    
+
     choices = []
     correct = []
     for index, (corr, label, text) in enumerate(options):
-        choices.append(text.strip())
-        if corr == "*":
-            correct.append(index)
+        if label.strip() and text.strip():
+            choices.append(text.strip())
+            if corr == "*":
+                correct.append(index)
 
     # Determine question type
     if len(choices) == 2 and all(choice.lower() in ("true", "false") for choice in choices):
@@ -57,7 +58,7 @@ def parse_options(block):
     elif len(correct) > 1:
         qtype = "multiple_answers_question"
     else:
-        qtype = "NA PLEASE FILL IN"
+        qtype = "multiple_choice_question"  # Default to multiple choice if no correct answer is marked
 
     return choices, correct, qtype
 
@@ -67,26 +68,38 @@ def parse_questions(text, nurs):
     questions_list = []
 
     for block in matches:
-        print("BLOCK:")
-        print(block.strip())
         q_num_match = re.match(r'(\d+)[).]\s*', block)
         q_num = q_num_match.group(1) if q_num_match else "none"
         question_number = "Question " + q_num.zfill(3)
-        print(question_number)
+
+        option_start = re.search(r'\n\*?[a-zA-Z][).]\s', block)
+        if option_start:
+            question_text = block[:option_start.start()].strip()
+        else:
+            question_text = block.strip()
+
+        question_text = re.sub(r'^\d+[).]\s*', '', question_text)
+
+        # Parse options and question type using parse_options helper
         choices, correct, qtype = parse_options(block)
+
         question = {
-            "questionNumber": question_number,
-            "questionText": block.strip(),
+            "questionTitle": question_number,
+            "questionText": question_text,
             "answerChoices": choices,
             "correctAnswers": correct,
             "questionType": qtype,
-            "nurs": nurs
+            "nurs": nurs.lower() == "true"
         }
         questions_list.append(question)
-        return questions_list
+
+    return questions_list
+
+
 
 def convert(doc_path, nurs):
     text = convert_to_txt(doc_path)
+    text = text.replace('\r\n', '\n').strip()
     questions = parse_questions(text, nurs)
     with open(json_path := doc_path.replace('.docx', '_build.json'), 'w', encoding='utf-8') as f:
         json.dump(questions, f, ensure_ascii=False, indent=4)
